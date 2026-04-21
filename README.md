@@ -55,6 +55,11 @@ The server provides the following MCP tools:
 3. **extract_links** - Extract all links from a webpage
    - Parameters: `url` (string)
 
+4. **smart_search** - Intelligently search a website for specific information
+   - Parameters: `url` (string), `query` (string), `max_depth` (integer, optional)
+   - Recursively follows relevant pages to find the query
+   - **Tip**: Use focused keywords (e.g., "contact phone") rather than full sentences for best results
+
 ## Claude Desktop Configuration
 
 Add to your Claude Desktop configuration file (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS or equivalent):
@@ -86,6 +91,26 @@ curl -X POST http://127.0.0.1:3000/browse \
 curl -X POST http://127.0.0.1:3000/search \
   -H "Content-Type: application/json" \
   -d '{"query": "rust programming", "limit": 3}'
+```
+
+### Smart search a website
+
+```bash
+curl -X POST http://127.0.0.1:3000/mcp/invoke \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "smart_search",
+      "arguments": {
+        "url": "https://example.com",
+        "query": "contact phone",
+        "max_depth": 3
+      }
+    }
+  }'
 ```
 
 ## Architecture

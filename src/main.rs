@@ -164,7 +164,7 @@ fn create_app(state: AppState) -> Router {
 }
 
 async fn run_http_server(port: u16, state: AppState) -> Result<()> {
-    let addr = format!("127.0.0.1:{}", port);
+    let addr = format!("0.0.0.0:{}", port);
     info!("Starting HTTP server on {}", addr);
 
     let app = create_app(state);
@@ -281,6 +281,41 @@ fn create_mcp_server() -> MCPServer {
                 props
             },
             required: vec!["url".to_string()],
+        },
+    });
+
+    server.register_tool(Tool {
+        name: "smart_search".to_string(),
+        description: "Intelligently search a website for specific information. Recursively follows relevant pages (contact, about, etc.) until it finds the query. Returns the page content where the information was found.".to_string(),
+        input_schema: ToolInputSchema {
+            r#type: "object".to_string(),
+            properties: {
+                let mut props = HashMap::new();
+                props.insert(
+                    "url".to_string(),
+                    serde_json::json!({
+                        "type": "string",
+                        "description": "The starting URL to search from"
+                    }),
+                );
+                props.insert(
+                    "query".to_string(),
+                    serde_json::json!({
+                        "type": "string",
+                        "description": "What to search for (e.g., 'phone number', 'email address', 'pricing', 'contact information')"
+                    }),
+                );
+                props.insert(
+                    "max_depth".to_string(),
+                    serde_json::json!({
+                        "type": "integer",
+                        "description": "Maximum pages to crawl (default: 10)",
+                        "default": 10
+                    }),
+                );
+                props
+            },
+            required: vec!["url".to_string(), "query".to_string()],
         },
     });
 

@@ -157,6 +157,7 @@ impl MCPServer {
             "browse_web" => self.tool_browse_web(browser, arguments).await,
             "search_web" => self.tool_search_web(browser, arguments).await,
             "extract_links" => self.tool_extract_links(browser, arguments).await,
+            "smart_search" => self.tool_smart_search(browser, arguments).await,
             _ => Err(anyhow!("Unknown tool: {}", tool_name)),
         };
 
@@ -266,6 +267,47 @@ impl MCPServer {
         let result = browser.fetch(url, false).await?;
 
         let text = format!("Links found on {}:\n\n{}", url, result.links.join("\n"));
+
+        Ok(ToolResult {
+            content: vec![ToolContent {
+                r#type: "text".to_string(),
+                text,
+            }],
+            is_error: None,
+        })
+    }
+
+    async fn tool_smart_search(
+        &self,
+        browser: Arc<Browser>,
+        args: serde_json::Value,
+    ) -> Result<ToolResult> {
+        let url = args
+            .get("url")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing URL"))?;
+
+        let query = args
+            .get("query")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing query"))?;
+
+        let max_depth = args.get("max_depth").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+
+        info!("MCP tool smart_search: '{}' on {}", query, url);
+        let result = browser.smart_search(url, query, max_depth).await?;
+
+        let text = if result.found {
+            format!(
+                "Found '{}' on: {}\n\nContext:\n{}\n\nSearch successful!",
+                result.query, result.source_url, result.context
+            )
+        } else {
+            format!(
+                "Could not find '{}' on {} (searched {} pages deep)\n\nThe information may not be publicly available on this website.",
+                result.query, url, max_depth
+            )
+        };
 
         Ok(ToolResult {
             content: vec![ToolContent {
