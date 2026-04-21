@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "llm-helper": {
+      "name": "LLM Helper",
+      "description": "Web browsing and search capabilities for LLMs",
+      "command": "llm-helper",
+      "args": ["--mcp-stdio"],
+      "env": {}
+    }
+  }
+}
