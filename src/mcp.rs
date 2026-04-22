@@ -35,20 +35,28 @@ pub struct MCPError {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct Tool {
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     pub description: String,
     pub input_schema: ToolInputSchema,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolInputSchema {
-    pub r#type: String,
-    pub properties: HashMap<String, serde_json::Value>,
-    pub required: Vec<String>,
+    #[serde(rename = "type")]
+    pub schema_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub properties: Option<HashMap<String, serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolResult {
     pub content: Vec<ToolContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -56,8 +64,10 @@ pub struct ToolResult {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolContent {
-    pub r#type: String,
+    #[serde(rename = "type")]
+    pub content_type: String,
     pub text: String,
 }
 
@@ -87,11 +97,21 @@ impl MCPServer {
         self.tools.lock().unwrap().clone()
     }
 
-    pub async fn handle_request(&self, request: MCPRequest, browser: Arc<Browser>) -> MCPResponse {
+    pub async fn handle_request(
+        &self,
+        request: MCPRequest,
+        browser: Arc<Browser>,
+    ) -> Option<MCPResponse> {
         match request.method.as_str() {
-            "tools/list" => self.handle_tools_list(request.id).await,
-            "tools/call" => self.handle_tool_call(request, browser).await,
-            _ => MCPResponse {
+            "initialize" => Some(self.handle_initialize(request.id, request.params).await),
+            "notifications/initialized" => {
+                info!("Client initialized notification received");
+                None // Notifications don't return responses
+            }
+            "ping" => Some(self.handle_ping(request.id).await),
+            "tools/list" => Some(self.handle_tools_list(request.id).await),
+            "tools/call" => Some(self.handle_tool_call(request, browser).await),
+            _ => Some(MCPResponse {
                 jsonrpc: "2.0".to_string(),
                 id: request.id,
                 result: None,
@@ -100,7 +120,54 @@ impl MCPServer {
                     message: format!("Method '{}' not found", request.method),
                     data: None,
                 }),
+            }),
+        }
+    }
+
+    async fn handle_initialize(
+        &self,
+        id: Option<u64>,
+        params: Option<serde_json::Value>,
+    ) -> MCPResponse {
+        info!("MCP initialize request received");
+
+        // Parse client protocol version if provided
+        let client_version = params
+            .as_ref()
+            .and_then(|p| p.get("protocolVersion"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("2025-03-26");
+
+        info!("Client protocol version: {}", client_version);
+
+        // Return server capabilities
+        let result = serde_json::json!({
+            "protocolVersion": "2025-03-26",
+            "serverInfo": {
+                "name": self._name,
+                "version": self._version
             },
+            "capabilities": {
+                "tools": {
+                    "listChanged": false
+                }
+            }
+        });
+
+        MCPResponse {
+            jsonrpc: "2.0".to_string(),
+            id,
+            result: Some(result),
+            error: None,
+        }
+    }
+
+    async fn handle_ping(&self, id: Option<u64>) -> MCPResponse {
+        MCPResponse {
+            jsonrpc: "2.0".to_string(),
+            id,
+            result: Some(serde_json::json!({})),
+            error: None,
         }
     }
 
@@ -211,7 +278,7 @@ impl MCPServer {
 
         Ok(ToolResult {
             content: vec![ToolContent {
-                r#type: "text".to_string(),
+                content_type: "text".to_string(),
                 text,
             }],
             is_error: None,
@@ -246,7 +313,7 @@ impl MCPServer {
 
         Ok(ToolResult {
             content: vec![ToolContent {
-                r#type: "text".to_string(),
+                content_type: "text".to_string(),
                 text,
             }],
             is_error: None,
@@ -270,7 +337,7 @@ impl MCPServer {
 
         Ok(ToolResult {
             content: vec![ToolContent {
-                r#type: "text".to_string(),
+                content_type: "text".to_string(),
                 text,
             }],
             is_error: None,
@@ -311,12 +378,32 @@ impl MCPServer {
 
         Ok(ToolResult {
             content: vec![ToolContent {
-                r#type: "text".to_string(),
+                content_type: "text".to_string(),
                 text,
             }],
             is_error: None,
         })
     }
+}
+
+use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::sync::broadcast;
+
+/// Session for MCP HTTP+SSE transport
+pub struct Session {
+    #[allow(dead_code)]
+    pub id: String,
+    #[allow(dead_code)]
+    pub tx: broadcast::Sender<String>,
+}
+
+static SESSION_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+pub fn create_session_id() -> String {
+    format!(
+        "session_{}",
+        SESSION_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
+    )
 }
 
 pub async fn run_stdio_server(server: Arc<MCPServer>, browser: Arc<Browser>) -> anyhow::Result<()> {
@@ -357,13 +444,15 @@ pub async fn run_stdio_server(server: Arc<MCPServer>, browser: Arc<Browser>) -> 
         };
 
         let response = server.handle_request(request, browser.clone()).await;
-        let response_json = serde_json::to_string(&response)?;
 
-        info!("Sending: {}", response_json);
-
-        stdout.write_all(response_json.as_bytes()).await?;
-        stdout.write_all(b"\n").await?;
-        stdout.flush().await?;
+        // Only send response if there is one (notifications return None)
+        if let Some(resp) = response {
+            let response_json = serde_json::to_string(&resp)?;
+            info!("Sending: {}", response_json);
+            stdout.write_all(response_json.as_bytes()).await?;
+            stdout.write_all(b"\n").await?;
+            stdout.flush().await?;
+        }
     }
 
     Ok(())

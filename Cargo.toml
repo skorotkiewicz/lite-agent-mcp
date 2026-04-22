@@ -22,6 +22,7 @@ html2text = "0.13"
 clap = { version = "4.0", features = ["derive"] }
 regex = "1.10"
 urlencoding = "2.1"
+tokio-stream = { version = "0.1.18", features = ["full"] }
 
 [[bin]]
 name = "llm-helper"
