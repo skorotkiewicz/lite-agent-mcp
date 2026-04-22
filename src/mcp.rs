@@ -72,16 +72,16 @@ pub struct ToolContent {
 }
 
 pub struct MCPServer {
-    _name: String,
-    _version: String,
+    name: String,
+    version: String,
     tools: Arc<std::sync::Mutex<Vec<Tool>>>,
 }
 
 impl MCPServer {
     pub fn new(name: &str, version: &str) -> Self {
         Self {
-            _name: name.to_string(),
-            _version: version.to_string(),
+            name: name.to_string(),
+            version: version.to_string(),
             tools: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
@@ -90,11 +90,6 @@ impl MCPServer {
         if let Ok(mut tools) = self.tools.lock() {
             tools.push(tool);
         }
-    }
-
-    pub async fn list_tools(&self) -> Vec<Tool> {
-        // Acquire lock and clone - no await needed for std::sync::Mutex
-        self.tools.lock().unwrap().clone()
     }
 
     pub async fn handle_request(
@@ -144,8 +139,8 @@ impl MCPServer {
         let result = serde_json::json!({
             "protocolVersion": "2025-03-26",
             "serverInfo": {
-                "name": self._name,
-                "version": self._version
+                "name": self.name,
+                "version": self.version
             },
             "capabilities": {
                 "tools": {
@@ -224,7 +219,6 @@ impl MCPServer {
             "browse_web" => self.tool_browse_web(browser, arguments).await,
             "search_web" => self.tool_search_web(browser, arguments).await,
             "extract_links" => self.tool_extract_links(browser, arguments).await,
-            "smart_search" => self.tool_smart_search(browser, arguments).await,
             _ => Err(anyhow!("Unknown tool: {}", tool_name)),
         };
 
@@ -256,6 +250,7 @@ impl MCPServer {
         let url = args
             .get("url")
             .and_then(|v| v.as_str())
+            .map(sanitize_arg)
             .ok_or_else(|| anyhow!("Missing URL"))?;
 
         let extract_text = args
@@ -264,7 +259,7 @@ impl MCPServer {
             .unwrap_or(true);
 
         info!("MCP tool browse_web: {}", url);
-        let result = browser.fetch(url, extract_text).await?;
+        let result = browser.fetch(&url, extract_text).await?;
 
         let text = format!(
             "Title: {}\nURL: {}\nStatus: {}\n\nContent:\n{}\n\nLinks found: {}\nImages found: {}",
@@ -293,12 +288,13 @@ impl MCPServer {
         let query = args
             .get("query")
             .and_then(|v| v.as_str())
+            .map(sanitize_arg)
             .ok_or_else(|| anyhow!("Missing query"))?;
 
         let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
 
         info!("MCP tool search_web: {}", query);
-        let results = browser.search(query, limit).await?;
+        let results = browser.search(&query, limit).await?;
 
         let mut text = format!("Search results for: '{}'\n\n", query);
         for (i, result) in results.iter().enumerate() {
@@ -328,10 +324,11 @@ impl MCPServer {
         let url = args
             .get("url")
             .and_then(|v| v.as_str())
+            .map(sanitize_arg)
             .ok_or_else(|| anyhow!("Missing URL"))?;
 
         info!("MCP tool extract_links: {}", url);
-        let result = browser.fetch(url, false).await?;
+        let result = browser.fetch(&url, false).await?;
 
         let text = format!("Links found on {}:\n\n{}", url, result.links.join("\n"));
 
@@ -344,58 +341,20 @@ impl MCPServer {
         })
     }
 
-    async fn tool_smart_search(
-        &self,
-        browser: Arc<Browser>,
-        args: serde_json::Value,
-    ) -> Result<ToolResult> {
-        let url = args
-            .get("url")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing URL"))?;
+}
 
-        let query = args
-            .get("query")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing query"))?;
-
-        let max_depth = args.get("max_depth").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
-
-        info!("MCP tool smart_search: '{}' on {}", query, url);
-        let result = browser.smart_search(url, query, max_depth).await?;
-
-        let text = if result.found {
-            format!(
-                "Found '{}' on: {}\n\nContext:\n{}\n\nSearch successful!",
-                result.query, result.source_url, result.context
-            )
-        } else {
-            format!(
-                "Could not find '{}' on {} (searched {} pages deep)\n\nThe information may not be publicly available on this website.",
-                result.query, url, max_depth
-            )
-        };
-
-        Ok(ToolResult {
-            content: vec![ToolContent {
-                content_type: "text".to_string(),
-                text,
-            }],
-            is_error: None,
-        })
-    }
+/// Strip common LLM wrapper tokens from argument strings.
+fn sanitize_arg(s: &str) -> String {
+    s.trim()
+        .trim_start_matches("<|\"|>")
+        .trim_end_matches("<|\"|>")
+        .trim()
+        .to_string()
 }
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::sync::broadcast;
 
-/// Session for MCP HTTP+SSE transport
-pub struct Session {
-    #[allow(dead_code)]
-    pub id: String,
-    #[allow(dead_code)]
-    pub tx: broadcast::Sender<String>,
-}
+pub type Session = ();
 
 static SESSION_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 

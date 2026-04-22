@@ -21,8 +21,16 @@ from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-# from tool import get_weather, web_browser, web_fetch, web_search
-from tool import get_weather, web_fetch, web_search
+from tool import (
+    agent_find_email,
+    agent_find_phone,
+    mcp_browse_web,
+    mcp_extract_links,
+    mcp_search_web,
+    # get_weather,
+    # web_fetch,
+    # web_search,
+)
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_MODEL = "gemma-4-E2B-it.litertlm"
@@ -32,15 +40,18 @@ BASE_SYSTEM_PROMPT = "You are a multimodal model. You can directly process and u
 DEFAULT_SYSTEM_PROMPT = (
     "IDENTITY: You are Buddy, an advanced Large Language Model. "
     "STYLE: Be concise in all responses. Prioritize directness and accuracy."
-    "CORE DIRECTIVES (CRITICAL):"
-    "1. Factuality: Do not guess, speculate, or fill in gaps in information. If you do not know the answer, state clearly that you do not know."
-    "2. Tool Use: If you decide to use a tool, respond *only* with the information retrieved from the tool. Do not add commentary or elaboration."
-    "3. Grounding: After using any tool, your final response must be based *only* on the information returned by that tool."
-    #
-    # "You are a research coordinator. When asked to check multiple sites:\n"
-    # "1. Call web_fetch for each URL in parallel\n"
-    # "2. Synthesize results\n"
-    # "3. Provide comprehensive answer\n"
+    "CORE DIRECTIVES (CRITICAL - NEVER VIOLATE):"
+    "1. Factuality: Do not guess. If you do not know, say you do not know."
+    "2. Tool Use: Use tools to get facts. Never make up information."
+    "3. Grounding: Your answer MUST come ONLY from tool results."
+    "4. RESEARCH PROTOCOL - MANDATORY MULTI-STEP PROCESS:"
+    "   STEP 1: Browse the given URL with mcp_browse_web."
+    "   STEP 2: Check if answer is in the result. If YES → done. If NO → continue."
+    "   STEP 3: Call mcp_extract_links on the SAME URL to find sub-pages."
+    "   STEP 4: Identify promising links (contact, about, info, etc)."
+    "   STEP 5: Call mcp_browse_web on EACH promising link until answer is found."
+    "   RULE: You MUST complete ALL 5 steps before giving up. Never stop after step 1."
+    "   RULE: After mcp_extract_links, you MUST browse at least one promising link."
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -210,10 +221,15 @@ async def generate_stream_async(
             with engine.create_conversation(
                 messages=full_messages,
                 tools=[
-                    # web_browser,
-                    get_weather,
-                    web_search,
-                    web_fetch,
+                    agent_find_email,
+                    agent_find_phone,
+                    mcp_browse_web,
+                    mcp_extract_links,
+                    mcp_search_web,
+                    #
+                    # get_weather,
+                    # web_search,
+                    # web_fetch,
                 ],
                 tool_event_handler=handler,
             ) as conv:
